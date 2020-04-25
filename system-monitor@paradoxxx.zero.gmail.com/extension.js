@@ -166,11 +166,22 @@ function build_menu_info() {
 
         // Add item data to table
         let col_index = 1;
-        for (let item in elts[elt].menu_items) {
-            menu_info_box_table_layout.attach(
-                elts[elt].menu_items[item], col_index, row_index, 1, 1);
-
-            col_index++;
+        if (Array.isArray(elts[elt].menu_items[0])) {
+            for (let line in elts[elt].menu_items) {
+                for (let item in elts[elt].menu_items[line]) {
+                    menu_info_box_table_layout.attach(
+                        elts[elt].menu_items[line][item], col_index, row_index, 1, 1);
+                    col_index++;
+                }
+                col_index = 1;
+                row_index++;
+            }
+        } else {
+            for (let item in elts[elt].menu_items) {
+                menu_info_box_table_layout.attach(
+                    elts[elt].menu_items[item], col_index, row_index, 1, 1);
+                col_index++;
+            }
         }
 
         row_index++;
@@ -215,10 +226,10 @@ const smStyleManager = class SystemMonitor_smStyleManager {
         this._netunits_mbits = _('Mbit/s');
         this._netunits_gbits = _('Gbit/s');
         this._pie_size = 300;
-        this._pie_fontsize = 14;
+        this._pie_fontsize = 12;
         this._bar_width = 300;
         this._bar_thickness = 15;
-        this._bar_fontsize = 14;
+        this._bar_fontsize = 12;
         this._compact = Schema.get_boolean('compact-display');
 
         if (this._compact) {
@@ -615,7 +626,6 @@ const Bar = class SystemMonitor_Bar extends Graph {
         this.actor.set_height(this.mounts.length * (3 * thickness));
         let [width, height] = this.actor.get_surface_size();
         let cr = this.actor.get_context();
-
         let x0 = width / 8;
         let y0 = thickness / 2;
         cr.setLineWidth(thickness);
@@ -1034,11 +1044,6 @@ const ElementBase = class SystemMonitor_ElementBase extends TipBox {
             this.threshold();
         }
         this.chart.update();
-        for (let i = 0; i < this.tip_vals.length; i++) {
-            if (this.tip_labels[i]) {
-                this.tip_labels[i].text = this.tip_vals[i].toString();
-            }
-        }
         return true;
     }
     reset_style() {
@@ -1247,7 +1252,6 @@ const Battery = class SystemMonitor_Battery extends ElementBase {
             this.menu_items[0].text = displayString;
         }
         this.vals = [this.percentage];
-        this.tip_vals[0] = Math.round(this.percentage);
     }
     create_text_items() {
         return [
@@ -1296,12 +1300,12 @@ const Cpu = class SystemMonitor_Cpu extends ElementBase {
         this.current = [0, 0, 0, 0, 0];
         try {
             this.total_cores = GTop.glibtop_get_sysinfo().ncpu;
-            if (cpuid === -1) {
-                this.max *= this.total_cores;
-            }
         } catch (e) {
             this.total_cores = this.get_cores();
             global.logError(e)
+        }
+        if (cpuid === -1) {
+            this.max *= this.total_cores;
         }
         this.last_total = 0;
         this.usage = [0, 0, 0, 1, 0];
@@ -1322,7 +1326,7 @@ const Cpu = class SystemMonitor_Cpu extends ElementBase {
             this.current[2] = this.gtop.nice;
             this.current[3] = this.gtop.idle;
             this.current[4] = this.gtop.iowait;
-            let delta = (this.gtop.total - this.last_total) / (100 * this.total_cores);
+            let delta = (this.gtop.total - this.last_total) / this.max;
 
             if (delta > 0) {
                 for (let i = 0; i < 5; i++) {
@@ -1393,27 +1397,54 @@ const Cpu = class SystemMonitor_Cpu extends ElementBase {
         //         this.last_total = this.gtop.xcpu_total[this.cpuid];
         // }
     }
+
+    _pad(number, precision) {
+        if (number > 99.5) {
+            return Math.round(number);
+        }
+        if (number < 1) {
+            return number.toFixed(precision);
+        }
+        return number.toPrecision(precision + 1);
+    }
+
     _apply() {
         let percent = 0;
         if (this.cpuid === -1) {
-            percent = Math.round(((100 * this.total_cores) - this.usage[3]) /
-                                 this.total_cores);
+            percent = (this.max - this.usage[3]) / this.total_cores;
         } else {
-            percent = Math.round((100 - this.usage[3]));
+            percent = (100 - this.usage[3]);
         }
 
-        this.text_items[0].text = this.menu_items[0].text = percent.toString();
-        let other = 100;
+        let precision = 1;
+        let separator = ' / ';
+        if (Style.get('') === '-compact') {
+            precision = 0;
+            separator = '/';
+        }
+
+        // Not to be confusing
+        let other = this.max;
         for (let i = 0; i < this.usage.length; i++) {
             other -= this.usage[i];
         }
-        // Not to be confusing
-        other = Math.max(0, other);
-        this.vals = [this.usage[0], this.usage[1],
-            this.usage[2], this.usage[4], other];
-        for (let i = 0; i < 5; i++) {
-            this.tip_vals[i] = Math.round(this.vals[i]);
-        }
+        this.vals = [
+            this.usage[0],
+            this.usage[1],
+            this.usage[2],
+            this.usage[4],
+            Math.max(0, other)
+        ];
+
+        this.text_items[0].text = this.menu_items[0][0].text =
+            this._pad(percent, precision).toLocaleString(Locale);
+
+        this.menu_items[0][3].text =
+            this._pad(this.usage[0] / this.total_cores, precision).toLocaleString(Locale);
+        this.menu_items[1][3].text =
+            this._pad(this.usage[1] / this.total_cores, precision).toLocaleString(Locale);
+        this.menu_items[2][3].text =
+            this._pad(this.usage[4] / this.total_cores, precision).toLocaleString(Locale);
     }
 
     get_cores() {
@@ -1440,14 +1471,64 @@ const Cpu = class SystemMonitor_Cpu extends ElementBase {
         ];
     }
     create_menu_items() {
-        return [
+        return [[
             new St.Label({
                 text: '',
                 style_class: Style.get('sm-value')}),
             new St.Label({
                 text: '%',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-value')}),
+            new St.Label({
+                text: '%',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: 'user',
                 style_class: Style.get('sm-label')})
-        ];
+        ], [
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-value')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-value')}),
+            new St.Label({
+                text: '%',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: 'sys',
+                style_class: Style.get('sm-label')})
+        ], [
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-value')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: '',
+                style_class: Style.get('sm-value')}),
+            new St.Label({
+                text: '%',
+                style_class: Style.get('sm-label')}),
+            new St.Label({
+                text: 'iowait',
+                style_class: Style.get('sm-label')})
+        ]];
     }
 }
 
@@ -1539,9 +1620,8 @@ const Disk = class SystemMonitor_Disk extends ElementBase {
                 this.usage[i] = Math.round(this.usage[i]);
             }
         }
-        this.tip_vals = [this.usage[0], this.usage[1]];
-        this.menu_items[0].text = this.text_items[1].text = this.tip_vals[0].toLocaleString(Locale);
-        this.menu_items[3].text = this.text_items[4].text = this.tip_vals[1].toLocaleString(Locale);
+        this.menu_items[0].text = this.text_items[1].text = this.usage[0].toLocaleString(Locale);
+        this.menu_items[3].text = this.text_items[4].text = this.usage[1].toLocaleString(Locale);
     }
     create_text_items() {
         return [
@@ -1578,7 +1658,7 @@ const Disk = class SystemMonitor_Disk extends ElementBase {
                 text: Style.diskunits(),
                 style_class: Style.get('sm-label')}),
             new St.Label({
-                text: _('R'),
+                text: ' ' + _('R'),
                 style_class: Style.get('sm-label')}),
             new St.Label({
                 text: '',
@@ -1626,7 +1706,6 @@ const Freq = class SystemMonitor_Freq extends ElementBase {
         let value = this.freq.toString();
         this.text_items[0].text = value + ' ';
         this.vals[0] = value;
-        this.tip_vals[0] = value;
         if (Style.get('') !== '-compact') {
             this.menu_items[0].text = value;
         } else {
@@ -1722,15 +1801,15 @@ const Mem = class SystemMonitor_Mem extends ElementBase {
     }
     _apply() {
         if (this.total === 0) {
-            this.vals = this.tip_vals = [0, 0, 0];
+            this.vals = [0, 0, 0];
         } else {
             for (let i = 0; i < 3; i++) {
                 this.vals[i] = this.mem[i] / this.total;
-                this.tip_vals[i] = Math.round(this.vals[i] * 100);
             }
         }
-        this.text_items[0].text = this.tip_vals[0].toString();
-        this.menu_items[0].text = this.tip_vals[0].toLocaleString(Locale);
+        let percent = Math.round(this.vals[0] * 100);
+        this.text_items[0].text = percent.toString();
+        this.menu_items[0].text = percent.toLocaleString(Locale);
         if (Style.get('') !== '-compact') {
             this.menu_items[3].text = this._pad(this.mem[0]) +
                 ' / ' + this._pad(this.total);
@@ -1866,67 +1945,69 @@ const Net = class SystemMonitor_Net extends ElementBase {
     }
 
     _apply() {
-        this.tip_vals = this.usage;
+        // this.tip_vals = this.usage;
+        let down = this.usage[0];
+        let up = this.usage[2];
         if (this.speed_in_bits) {
-            this.tip_vals[0] = Math.round(this.tip_vals[0] * 8.192);
-            this.tip_vals[2] = Math.round(this.tip_vals[2] * 8.192);
-            if (this.tip_vals[0] < 1000) {
+            down = Math.round(down * 8.192);
+            up = Math.round(up * 8.192);
+            if (down < 1000) {
                 this.text_items[2].text = Style.netunits_kbits();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('kbit/s');
+                this.menu_items[1].text = _('kbit/s');
             } else if (this.tip_vals[0] < 1000000) {
                 this.text_items[2].text = Style.netunits_mbits();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('Mbit/s');
-                this.tip_vals[0] = (this.tip_vals[0] / 1000).toPrecision(3);
+                this.menu_items[1].text = _('Mbit/s');
+                down = (down / 1000).toPrecision(3);
             } else {
                 this.text_items[2].text = Style.netunits_gbits();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('Gbit/s');
-                this.tip_vals[0] = (this.tip_vals[0] / 1000000).toPrecision(3);
+                this.menu_items[1].text = _('Gbit/s');
+                down = (down / 1000000).toPrecision(3);
             }
-            if (this.tip_vals[2] < 1000) {
+            if (up < 1000) {
                 this.text_items[5].text = Style.netunits_kbits();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('kbit/s');
+                this.menu_items[4].text = _('kbit/s');
             } else if (this.tip_vals[2] < 1000000) {
                 this.text_items[5].text = Style.netunits_mbits();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('Mbit/s');
-                this.tip_vals[2] = (this.tip_vals[2] / 1000).toPrecision(3);
+                this.menu_items[4].text = _('Mbit/s');
+                up = (up / 1000).toPrecision(3);
             } else {
                 this.text_items[5].text = Style.netunits_gbits();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('Gbit/s');
-                this.tip_vals[2] = (this.tip_vals[2] / 1000000).toPrecision(3);
+                this.menu_items[4].text = _('Gbit/s');
+                up = (up / 1000000).toPrecision(3);
             }
         } else {
-            if (this.tip_vals[0] < 1024) {
+            if (down < 1024) {
                 this.text_items[2].text = Style.netunits_kbytes();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('KiB/s');
+                this.menu_items[1].text = _('KiB/s');
             } else if (this.tip_vals[0] < 1048576) {
                 this.text_items[2].text = Style.netunits_mbytes();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('MiB/s');
-                this.tip_vals[0] = (this.tip_vals[0] / 1024).toPrecision(3);
+                this.menu_items[1].text = _('MiB/s');
+                down = (down / 1024).toPrecision(3);
             } else {
                 this.text_items[2].text = Style.netunits_gbytes();
-                this.menu_items[1].text = this.tip_unit_labels[0].text = _('GiB/s');
-                this.tip_vals[0] = (this.tip_vals[0] / 1048576).toPrecision(3);
+                this.menu_items[1].text = _('GiB/s');
+                down = (down / 1048576).toPrecision(3);
             }
-            if (this.tip_vals[2] < 1024) {
+            if (up < 1024) {
                 this.text_items[5].text = Style.netunits_kbytes();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('KiB/s');
+                this.menu_items[4].text = _('KiB/s');
             } else if (this.tip_vals[2] < 1048576) {
                 this.text_items[5].text = Style.netunits_mbytes();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('MiB/s');
-                this.tip_vals[2] = (this.tip_vals[2] / 1024).toPrecision(3);
+                this.menu_items[4].text = _('MiB/s');
+                up = (up / 1024).toPrecision(3);
             } else {
                 this.text_items[5].text = Style.netunits_gbytes();
-                this.menu_items[4].text = this.tip_unit_labels[2].text = _('GiB/s');
-                this.tip_vals[2] = (this.tip_vals[2] / 1048576).toPrecision(3);
+                this.menu_items[4].text = _('GiB/s');
+                up = (up / 1048576).toPrecision(3);
             }
         }
 
         if (Style.get('') !== '-compact') {
-            this.menu_items[0].text = this.text_items[1].text = this.tip_vals[0].toString();
-            this.menu_items[3].text = this.text_items[4].text = this.tip_vals[2].toString();
+            this.menu_items[0].text = this.text_items[1].text = down.toString();
+            this.menu_items[3].text = this.text_items[4].text = up.toString();
         } else {
-            this.menu_items[0].text = this.text_items[1].text = this._pad(this.tip_vals[0].toString(), 4);
-            this.menu_items[3].text = this.text_items[4].text = this._pad(this.tip_vals[2].toString(), 4);
+            this.menu_items[0].text = this.text_items[1].text = this._pad(down.toString(), 4);
+            this.menu_items[3].text = this.text_items[4].text = this._pad(up.toString(), 4);
         }
     }
     create_text_items() {
@@ -2312,8 +2393,8 @@ const Gpu = class SystemMonitor_Gpu extends ElementBase {
             this.vals = [0, 0];
             this.tip_vals = [0, 0];
         } else {
-            // we subtract percentage from memory because we do not want memory to be 
-            // "accumulated" in the chart with utilization; these two measures should be 
+            // we subtract percentage from memory because we do not want memory to be
+            // "accumulated" in the chart with utilization; these two measures should be
             // independent
             this.vals = [this.percentage, this.mem / this.total * 100 - this.percentage];
             this.tip_vals = [Math.round(this.vals[0]), this.mem];

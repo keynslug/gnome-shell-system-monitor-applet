@@ -7,7 +7,6 @@
     color: #bbb;
     font-size: 0.75em;
     padding-top: 5px;
-    font-family: monospace;
 }
 
 .sm-label-left {
@@ -113,7 +112,6 @@
 .sm-label-compact {
     color: #bbb;
     font-size: 0.6875em;
-    font-family: monospace;
 } /* Bat, Net... units in menu items */
 
 .sm-value-compact {
